@@ -22,8 +22,8 @@ import java.time.format.DateTimeFormatter;
 public class MainPanel extends JFrame {
 
     // ── ⚙ Konfigurasi ────────────────────────────────────────
-    private static final String UID_ADMIN   = "81CB5B5D"; // ← ganti UID kartu admin
-    private static final String SERIAL_PORT = "COM9";     // ← ganti sesuai port ESP32
+    private static final String UID_ADMIN   = "5313D913"; // ← ganti UID kartu admin
+    private static final String SERIAL_PORT = "COM3";     // ← ganti sesuai port ESP32
     // ─────────────────────────────────────────────────────────
 
     // ── Warna ─────────────────────────────────────────────────
@@ -289,65 +289,69 @@ public class MainPanel extends JFrame {
     // ─────────────────────────────────────────────────────────
     //  Logika Utama — proses kartu yang ditempel
     // ─────────────────────────────────────────────────────────
-    private void prosesKartu(String uid) {
-        lblUIDTerakhir.setText("UID: " + uid);
-        scanning = true;
+        private void prosesKartu(String uid) {
+            scanning = true;
 
-        // Reset otomatis setelah 4 detik
-        if (timerReset != null) timerReset.stop();
-        timerReset = new Timer(4000, e -> resetTampilan());
-        timerReset.setRepeats(false);
-        timerReset.start();
+            if (timerReset != null) timerReset.stop();
+            timerReset = new Timer(4000, e -> resetTampilan());
+            timerReset.setRepeats(false);
+            timerReset.start();
 
-        // ── Cek apakah kartu admin ──
-        if (uid.equalsIgnoreCase(UID_ADMIN)) {
-            tampilkanHasil("Admin Terdeteksi", "Membuka Admin Panel...",
-                C_PRIMARY, true);
-            Timer t = new Timer(800, e -> bukaAdminPanel());
-            t.setRepeats(false);
-            t.start();
-            scanning = false;
-            return;
+            // Cek admin
+            if (uid.equalsIgnoreCase(UID_ADMIN)) {
+                System.out.println("[DEBUG] Kartu admin terdeteksi");
+                tampilkanHasil("Admin Terdeteksi", "Membuka Admin Panel...",
+                    C_PRIMARY, true);
+                Timer t = new Timer(800, e -> bukaAdminPanel());
+                t.setRepeats(false);
+                t.start();
+                return;
+            }
+
+            // Validasi ke DB
+            new Thread(() -> {
+                System.out.println("[DEBUG] Validasi UID ke database: " + uid);
+                String nama = DatabaseHelper.validasiKartu(uid);
+                System.out.println("[DEBUG] Hasil validasi: " + (nama != null ? nama : "TIDAK DITEMUKAN"));
+
+                SwingUtilities.invokeLater(() -> {
+                    if (nama != null) {
+                        int idUser = DatabaseHelper.getIdUserByUID(uid);
+                        System.out.println("[DEBUG] id_user: " + idUser);
+                        int idLokerAktif = DatabaseHelper.getLokerAktifUser(idUser);
+                        System.out.println("[DEBUG] id_loker_aktif: " + idLokerAktif);
+                        if (serialHelper != null) serialHelper.kirimPerintah("wiw");
+                        
+
+                        tampilkanHasil(
+                            "Selamat datang, " + nama + "!",
+                            "Memeriksa status loker...",
+                            C_SUCCESS, true);
+
+                        Timer t = new Timer(800, e -> {
+                            if (idLokerAktif != -1) {
+                                int nomorLoker = DatabaseHelper.getNomorLoker(idLokerAktif);
+                                tampilkanDialogTutupLoker(nama, idUser, idLokerAktif, nomorLoker);
+                            } else {
+                                PilihLoker dialog = new PilihLoker(
+                                    MainPanel.this, nama, idUser, serialHelper);
+                                dialog.setVisible(true);
+                                resetTampilan();
+                            }
+                        });
+                        t.setRepeats(false);
+                        t.start();
+                    } else {
+                        if (serialHelper != null) serialHelper.kirimPerintah("wiww");
+                        
+                        tampilkanHasil(
+                            "Kartu Tidak Dikenal",
+                            "UID tidak terdaftar di database",
+                            C_DANGER, false);
+                    }
+                });
+            }).start();
         }
-
-        // ── Cek apakah kartu user terdaftar di DB ──
-        new Thread(() -> {
-            String nama = DatabaseHelper.validasiKartu(uid);
-            SwingUtilities.invokeLater(() -> {
-               if (nama != null) {
-                    tampilkanHasil(
-                        "✅  Selamat datang, " + nama + "!",
-                        "Memeriksa status loker...",
-                        C_SUCCESS, true);
-
-                    int idUser   = DatabaseHelper.getIdUserByUID(uid);
-                    int idLokerAktif = DatabaseHelper.getLokerAktifUser(idUser);
-
-                    Timer t = new Timer(800, e -> {
-                        if (idLokerAktif != -1) {
-                            // User sedang pakai loker → tampilkan opsi tutup loker
-                            int nomorLoker = DatabaseHelper.getNomorLoker(idLokerAktif);
-                            tampilkanDialogTutupLoker(nama, idUser, idLokerAktif, nomorLoker);
-                        } else {
-                            // User belum pakai loker → pilih loker baru
-                            PilihLoker dialog = new PilihLoker(
-                                MainPanel.this, nama, idUser, serialHelper);
-                            dialog.setVisible(true);
-                            resetTampilan();
-                        }
-                    });
-                    t.setRepeats(false);
-                    t.start();
-                }else {
-                    // Kartu tidak dikenal → tolak
-                    tampilkanHasil(
-                        "Kartu Tidak Dikenal",
-                        "UID tidak terdaftar di database",
-                        C_DANGER, false);
-                }
-            });
-        }).start();
-    }
     
         private void tampilkanDialogTutupLoker(String nama, int idUser, 
                                             int idLoker, int nomorLoker) {
@@ -409,7 +413,7 @@ public class MainPanel extends JFrame {
             resetTampilan();
         });
 
-        JButton btnTutup = new JButton("🔒  Tutup & Kosongkan Loker");
+        JButton btnTutup = new JButton("Tutup & Kosongkan Loker");
         btnTutup.setFont(new Font("Segoe UI", Font.BOLD, 12));
         btnTutup.setBackground(new Color(34, 197, 94));
         btnTutup.setForeground(Color.WHITE);
@@ -426,12 +430,12 @@ public class MainPanel extends JFrame {
                     dialog.dispose();
                     if (ok) {
                         tampilkanHasil(
-                            "✅  Loker " + nomorLoker + " dikosongkan!",
+                            "Loker " + nomorLoker + " dikosongkan!",
                             "Silakan ambil barang kamu.",
                             C_SUCCESS, true);
                     } else {
                         tampilkanHasil(
-                            "❌  Gagal menutup loker",
+                            "Gagal menutup loker",
                             "Coba tempelkan kartu kembali.",
                             C_DANGER, false);
                     }
@@ -473,7 +477,7 @@ public class MainPanel extends JFrame {
         lblStatusKartu.setText("Tempelkan Kartu");
         lblStatusKartu.setForeground(C_WHITE);
         lblUIDTerakhir.setText(" ");
-        setBadge("● Menunggu kartu...", C_MUTED);
+        setBadge("Menunggu kartu...", C_MUTED);
 
         Component rfidArea = ((JPanel) getContentPane()
             .getComponent(1)).getComponent(0);
@@ -498,7 +502,7 @@ public class MainPanel extends JFrame {
     //  Buka jendela lain
     // ─────────────────────────────────────────────────────────
     private void bukaAdminPanel() {
-        AdminPanel admin = new AdminPanel();
+        AdminPanel admin = new AdminPanel(serialHelper);
         admin.setVisible(true);
         admin.setAlwaysOnTop(true);
     }
@@ -555,7 +559,7 @@ public class MainPanel extends JFrame {
             SwingUtilities.invokeLater(() -> {
                 System.out.println("[ESP32 Status] " + status);
                 if ("LOKER_BUKA".equals(status)) {
-                    setBadge("Loker sedang terbuka (3 detik)...", C_SUCCESS);
+                    setBadge("Loker sedang terbuka (5 detik)...", C_SUCCESS);
                 } else if ("LOKER_TUTUP".equals(status)) {
                     setBadge("Loker tertutup kembali", C_MUTED);
                 }
