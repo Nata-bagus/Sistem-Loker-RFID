@@ -18,7 +18,7 @@ import java.time.format.DateTimeFormatter;
  *  - Unblock user (aktifkan kembali kartu)
  *  - Cari user berdasarkan nama / prodi
  */
-public class AdminPanel extends JFrame {
+public class AdminPanel extends BaseAdminPanel {
 
     // ── Warna ─────────────────────────────────────────────────
     private static final Color C_BG        = new Color(245, 246, 250);
@@ -55,17 +55,17 @@ public class AdminPanel extends JFrame {
     private JLabel          lblStatus;
     private JLabel          lblDbStatus;
     private JLabel          lblJumlahUser;
-    private JButton         btnHapus;
-    private JButton         btnBlock;
-    private JButton         btnUnblock;
-    private JButton         btnRefresh;
+    private JButton         btnBlock, btnEmergency, btnHapus, btnRefresh, btnUnblock;
+    private SerialHelper serialHelper;
+    
 
     // Kolom tabel
     private static final String[] KOLOM = {
         "ID", "Nama Mahasiswa", "Program Studi", "UID Kartu", "Status Kartu", "Terdaftar"
     };
 
-    public AdminPanel() {
+    public AdminPanel(SerialHelper serialHelper) {
+        this.serialHelper = serialHelper;
         setTitle("Admin Panel — Sistem Loker RFID Universitas Negeri Malang");
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setSize(920, 620);
@@ -112,15 +112,8 @@ public class AdminPanel extends JFrame {
         txt.add(sub);
 
         // Kanan: tombol buka form pendaftaran
-        JButton btnPendaftaran = createButton("+ Pendaftaran User", Color.WHITE, C_PRIMARY_D);
-        btnPendaftaran.setBorder(BorderFactory.createCompoundBorder(
-            new LineBorder(new Color(186, 215, 255), 1, true),
-            BorderFactory.createEmptyBorder(8, 16, 8, 16)));
-        btnPendaftaran.addActionListener(e -> new PendaftaranLoker().setVisible(true));
-
         p.add(icon,             BorderLayout.WEST);
         p.add(txt,              BorderLayout.CENTER);
-        p.add(btnPendaftaran,   BorderLayout.EAST);
         return p;
     }
 
@@ -267,14 +260,14 @@ public class AdminPanel extends JFrame {
         JPanel tombol = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         tombol.setOpaque(false);
 
-        btnUnblock = createButton("✅  Aktifkan Kartu", C_SUCCESS_L, C_SUCCESS);
+        btnUnblock = createButton("Aktifkan Kartu", C_SUCCESS_L, C_SUCCESS);
         btnUnblock.setBorder(BorderFactory.createCompoundBorder(
             new LineBorder(C_SUCCESS, 1, true),
             BorderFactory.createEmptyBorder(8, 16, 8, 16)));
         btnUnblock.setEnabled(false);
         btnUnblock.addActionListener(e -> unblockUser());
 
-        btnBlock = createButton("🚫  Blokir Kartu", C_WARNING_L, C_WARNING);
+        btnBlock = createButton("Blokir Kartu", C_WARNING_L, C_WARNING);
         btnBlock.setBorder(BorderFactory.createCompoundBorder(
             new LineBorder(C_WARNING, 1, true),
             BorderFactory.createEmptyBorder(8, 16, 8, 16)));
@@ -288,9 +281,17 @@ public class AdminPanel extends JFrame {
         btnHapus.setEnabled(false);
         btnHapus.addActionListener(e -> hapusUser());
 
+        btnEmergency = createButton("🚨  Emergency Mode", 
+            new Color(127, 29, 29), new Color(254, 202, 202));
+        btnEmergency.setBorder(BorderFactory.createCompoundBorder(
+            new LineBorder(new Color(220, 38, 38), 1, true),
+            BorderFactory.createEmptyBorder(8, 16, 8, 16)));
+        btnEmergency.addActionListener(e -> bukaEmergencyMode());
+
         tombol.add(btnUnblock);
         tombol.add(btnBlock);
         tombol.add(btnHapus);
+        tombol.add(btnEmergency);
 
         p.add(lblStatus, BorderLayout.CENTER);
         p.add(tombol,    BorderLayout.EAST);
@@ -321,7 +322,8 @@ public class AdminPanel extends JFrame {
     // ─────────────────────────────────────────────────────────
     //  Data & Logika
     // ─────────────────────────────────────────────────────────
-    private void muatDataUser() {
+    @Override
+    protected void muatDataUser() {
         modelTabel.setRowCount(0);
         new Thread(() -> {
             String sql = """
@@ -355,13 +357,13 @@ public class AdminPanel extends JFrame {
                 final int total = jumlah;
                 SwingUtilities.invokeLater(() -> {
                     lblJumlahUser.setText(total + " user terdaftar");
-                    lblDbStatus.setText("● DB: Terhubung ✓");
+                    lblDbStatus.setText("DB: Terhubung");
                     lblDbStatus.setForeground(new Color(134, 239, 172));
                     showStatus("Data berhasil dimuat — " + total + " user.", C_SUCCESS_L, C_SUCCESS);
                 });
             } catch (SQLException e) {
                 SwingUtilities.invokeLater(() -> {
-                    lblDbStatus.setText("● DB: Gagal koneksi ✗");
+                    lblDbStatus.setText("DB: Gagal koneksi");
                     lblDbStatus.setForeground(new Color(252, 165, 165));
                     showStatus("Gagal memuat data: " + e.getMessage(), C_DANGER_L, C_DANGER);
                 });
@@ -498,9 +500,10 @@ public class AdminPanel extends JFrame {
 
         int idUser = (int) modelTabel.getValueAt(modelRow, 0);
         new Thread(() -> {
-            String sqlGetKartu   = "SELECT id_kartu FROM user WHERE id_user = ?";
-            String sqlHapusUser  = "DELETE FROM user WHERE id_user = ?";
-            String sqlHapusKartu = "DELETE FROM kartu_rfid WHERE id_kartu = ?";
+            String sqlGetKartu    = "SELECT id_kartu FROM user WHERE id_user = ?";
+            String sqlHapusAkses  = "DELETE FROM akses_loker WHERE id_user = ?";
+            String sqlHapusUser   = "DELETE FROM user WHERE id_user = ?";
+            String sqlHapusKartu  = "DELETE FROM kartu_rfid WHERE id_kartu = ?";
 
             try (Connection con = DatabaseHelper.getConnection()) {
                 con.setAutoCommit(false);
@@ -513,13 +516,19 @@ public class AdminPanel extends JFrame {
                         if (rs.next()) idKartu = rs.getInt("id_kartu");
                     }
 
-                    // 2. Hapus user
+                    // 2. Hapus riwayat akses_loker dulu
+                    try (PreparedStatement ps = con.prepareStatement(sqlHapusAkses)) {
+                        ps.setInt(1, idUser);
+                        ps.executeUpdate();
+                    }
+
+                    // 3. Hapus user
                     try (PreparedStatement ps = con.prepareStatement(sqlHapusUser)) {
                         ps.setInt(1, idUser);
                         ps.executeUpdate();
                     }
 
-                    // 3. Hapus kartu_rfid
+                    // 4. Hapus kartu_rfid
                     if (idKartu != -1) {
                         try (PreparedStatement ps = con.prepareStatement(sqlHapusKartu)) {
                             ps.setInt(1, idKartu);
@@ -530,19 +539,21 @@ public class AdminPanel extends JFrame {
                     con.commit();
                     SwingUtilities.invokeLater(() -> {
                         muatDataUser();
-                        showStatus("🗑  User " + nama + " berhasil dihapus dari database.",
+                        showStatus("User " + nama + " berhasil dihapus.",
                             C_DANGER_L, C_DANGER);
                     });
 
                 } catch (SQLException ex) {
                     con.rollback();
                     SwingUtilities.invokeLater(() ->
-                        showStatus("❌  Gagal hapus: " + ex.getMessage(), C_DANGER_L, C_DANGER));
+                        showStatus("Gagal hapus: " + ex.getMessage(),
+                            C_DANGER_L, C_DANGER));
                 }
 
             } catch (SQLException e) {
                 SwingUtilities.invokeLater(() ->
-                    showStatus("❌  Gagal koneksi: " + e.getMessage(), C_DANGER_L, C_DANGER));
+                    showStatus("Gagal koneksi: " + e.getMessage(),
+                            C_DANGER_L, C_DANGER));
             }
         }).start();
     }
@@ -600,7 +611,207 @@ public class AdminPanel extends JFrame {
         l.setForeground(color);
         return l;
     }
+    
+    private void bukaEmergencyMode() {
+        // Buat dialog Emergency
+        JDialog dialog = new JDialog(this, "Emergency Mode", true);
+        dialog.setSize(620, 480);
+        dialog.setLocationRelativeTo(this);
+        dialog.setResizable(false);
 
+        JPanel root = new JPanel(new BorderLayout());
+        root.setBackground(new Color(15, 23, 42));
+
+        // ── Header merah ──
+        JPanel header = new JPanel(new GridLayout(2, 1, 0, 4));
+        header.setBackground(new Color(127, 29, 29));
+        header.setBorder(BorderFactory.createEmptyBorder(14, 20, 14, 20));
+
+        JLabel lJudul = new JLabel("🚨Emergency Mode — Manajemen Loker Darurat");
+        lJudul.setFont(new Font("Segoe UI", Font.BOLD, 15));
+        lJudul.setForeground(new Color(254, 202, 202));
+
+        JLabel lSub = new JLabel(
+            "Buka paksa loker yang tersangkut atau kosongkan semua loker sekaligus");
+        lSub.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        lSub.setForeground(new Color(252, 165, 165));
+
+        header.add(lJudul);
+        header.add(lSub);
+
+        // ── Tabel loker terisi ──
+        String[] kolom = {"No. Loker", "Nama User", "Prodi", "Waktu Buka", "Aksi"};
+        String[][] dataLoker = DatabaseHelper.getLokerTerisi();
+
+        DefaultTableModel modelEmergency = new DefaultTableModel(kolom, 0) {
+            @Override public boolean isCellEditable(int r, int c) { return false; }
+        };
+
+        for (String[] row : dataLoker) {
+            modelEmergency.addRow(new Object[]{
+                "Loker " + row[1], row[2], row[3], row[4], row[0] + "|" + row[5]
+            });
+        }
+
+        JTable tabel = new JTable(modelEmergency);
+        tabel.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        tabel.setRowHeight(36);
+        tabel.setBackground(new Color(30, 41, 59));
+        tabel.setForeground(new Color(226, 232, 240));
+        tabel.setGridColor(new Color(71, 85, 105));
+        tabel.setSelectionBackground(new Color(127, 29, 29));
+        tabel.setSelectionForeground(Color.WHITE);
+        tabel.getTableHeader().setBackground(new Color(20, 30, 48));
+        tabel.getTableHeader().setForeground(new Color(148, 163, 184));
+        tabel.getTableHeader().setFont(new Font("Segoe UI", Font.BOLD, 11));
+        tabel.getColumnModel().getColumn(4).setMaxWidth(0);  // sembunyikan kolom id
+        tabel.getColumnModel().getColumn(4).setMinWidth(0);
+        tabel.getColumnModel().getColumn(4).setPreferredWidth(0);
+
+        JScrollPane scroll = new JScrollPane(tabel);
+        scroll.setBorder(BorderFactory.createLineBorder(new Color(71, 85, 105)));
+        scroll.getViewport().setBackground(new Color(30, 41, 59));
+
+        // Label info jumlah
+        JLabel lblInfo = new JLabel(dataLoker.length == 0
+            ? "Semua loker dalam kondisi kosong"
+            : dataLoker.length + " loker sedang terisi");
+        lblInfo.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        lblInfo.setForeground(dataLoker.length == 0
+            ? new Color(34, 197, 94) : new Color(251, 191, 36));
+        lblInfo.setBorder(BorderFactory.createEmptyBorder(8, 4, 4, 0));
+
+        JPanel tengah = new JPanel(new BorderLayout(0, 6));
+        tengah.setBackground(new Color(15, 23, 42));
+        tengah.setBorder(BorderFactory.createEmptyBorder(12, 16, 8, 16));
+        tengah.add(lblInfo,  BorderLayout.NORTH);
+        tengah.add(scroll,   BorderLayout.CENTER);
+
+        // ── Tombol bawah ──
+        JPanel bottom = new JPanel(new BorderLayout(10, 0));
+        bottom.setBackground(new Color(20, 30, 48));
+        bottom.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createMatteBorder(1, 0, 0, 0, new Color(71, 85, 105)),
+            BorderFactory.createEmptyBorder(12, 16, 12, 16)));
+
+        // Tombol buka loker terpilih
+        JButton btnBukaSatu = new JButton("Buka Loker Terpilih");
+        btnBukaSatu.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        btnBukaSatu.setBackground(new Color(217, 119, 6));
+        btnBukaSatu.setForeground(Color.WHITE);
+        btnBukaSatu.setBorderPainted(false);
+        btnBukaSatu.setFocusPainted(false);
+        btnBukaSatu.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        btnBukaSatu.setBorder(BorderFactory.createEmptyBorder(8, 16, 8, 16));
+        btnBukaSatu.addActionListener(e -> {
+            int baris = tabel.getSelectedRow();
+            if (baris < 0) {
+                JOptionPane.showMessageDialog(dialog,
+                    "Pilih loker dulu dari tabel!", "Peringatan",
+                    JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            String idData    = (String) modelEmergency.getValueAt(baris, 4);
+            String nomorLoker = ((String) modelEmergency.getValueAt(baris, 0))
+                .replace("Loker ", "");
+            int idLoker  = Integer.parseInt(idData.split("\\|")[0]);
+            int idAkses  = Integer.parseInt(idData.split("\\|")[1]);
+
+            int konfirm = JOptionPane.showConfirmDialog(dialog,
+                "<html>Buka paksa dan kosongkan <b>Loker " + nomorLoker + "</b>?<br><br>" +
+                "User: " + modelEmergency.getValueAt(baris, 1) + "</html>",
+                "Konfirmasi Emergency", JOptionPane.YES_NO_OPTION,
+                JOptionPane.WARNING_MESSAGE);
+
+            if (konfirm != JOptionPane.YES_OPTION) return;
+
+            new Thread(() -> {
+                boolean ok = DatabaseHelper.emergencyKosongkanLoker(idLoker, idAkses);
+                SwingUtilities.invokeLater(() -> {
+                    if (ok) {
+                        if (serialHelper != null) serialHelper.kirimPerintah("op");
+                        modelEmergency.removeRow(baris);
+                        lblInfo.setText("Loker " + nomorLoker + " berhasil dikosongkan");
+                        lblInfo.setForeground(new Color(34, 197, 94));                 
+                        muatDataUser(); // refresh tabel utama AdminPanel
+                    } else {
+                        lblInfo.setText("Gagal mengosongkan loker");
+                        lblInfo.setForeground(new Color(239, 68, 68));
+                    }
+                });
+            }).start();
+        });
+
+        // Tombol kosongkan semua
+        JButton btnKosongkanSemua = new JButton("⚡  Kosongkan Semua Loker");
+        btnKosongkanSemua.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        btnKosongkanSemua.setBackground(new Color(127, 29, 29));
+        btnKosongkanSemua.setForeground(new Color(254, 202, 202));
+        btnKosongkanSemua.setBorderPainted(false);
+        btnKosongkanSemua.setFocusPainted(false);
+        btnKosongkanSemua.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        btnKosongkanSemua.setBorder(BorderFactory.createEmptyBorder(8, 16, 8, 16));
+        btnKosongkanSemua.addActionListener(e -> {
+            if (dataLoker.length == 0) {
+                JOptionPane.showMessageDialog(dialog,
+                    "Semua loker sudah kosong!", "Info",
+                    JOptionPane.INFORMATION_MESSAGE);
+                return;
+            }
+            int konfirm = JOptionPane.showConfirmDialog(dialog,
+                "<html><b>⚠ Kosongkan SEMUA loker yang terisi?</b><br><br>" +
+                "Tindakan ini akan:<br>" +
+                "- Mengosongkan " + dataLoker.length + " loker sekaligus<br>" +
+                "- Menutup semua sesi akses yang aktif<br><br>" +
+                "<span color='#DC2626'>Gunakan hanya dalam kondisi darurat!</span></html>",
+                "Konfirmasi Emergency", JOptionPane.YES_NO_OPTION,
+                JOptionPane.ERROR_MESSAGE);
+
+            if (konfirm != JOptionPane.YES_OPTION) return;
+
+            new Thread(() -> {
+                boolean ok = DatabaseHelper.emergencyKosongkanSemua();
+                SwingUtilities.invokeLater(() -> {
+                    if (ok) {
+                        if (serialHelper != null) serialHelper.kirimPerintah("op");
+                        modelEmergency.setRowCount(0);
+                        lblInfo.setText("Semua loker berhasil dikosongkan");
+                        lblInfo.setForeground(new Color(34, 197, 94));
+                        muatDataUser();
+                    } else {
+                        lblInfo.setText("Gagal mengosongkan semua loker");
+                        lblInfo.setForeground(new Color(239, 68, 68));
+                    }
+                });
+            }).start();
+        });
+
+        // Tombol tutup
+        JButton btnTutup = new JButton("Tutup");
+        btnTutup.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        btnTutup.setBackground(new Color(51, 65, 85));
+        btnTutup.setForeground(Color.WHITE);
+        btnTutup.setBorderPainted(false);
+        btnTutup.setFocusPainted(false);
+        btnTutup.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        btnTutup.setBorder(BorderFactory.createEmptyBorder(8, 16, 8, 16));
+        btnTutup.addActionListener(e -> dialog.dispose());
+
+        JPanel kanan = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        kanan.setOpaque(false);
+        kanan.add(btnTutup);
+        kanan.add(btnBukaSatu);
+        kanan.add(btnKosongkanSemua);
+
+        bottom.add(kanan, BorderLayout.EAST);
+
+        root.add(header, BorderLayout.NORTH);
+        root.add(tengah, BorderLayout.CENTER);
+        root.add(bottom, BorderLayout.SOUTH);
+
+        dialog.setContentPane(root);
+        dialog.setVisible(true);
+    }
     // ─────────────────────────────────────────────────────────
     //  Main — bisa dijalankan langsung atau dari PendaftaranLoker
     // ─────────────────────────────────────────────────────────
@@ -608,6 +819,6 @@ public class AdminPanel extends JFrame {
         try {
             UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
         } catch (Exception ignored) {}
-        SwingUtilities.invokeLater(() -> new AdminPanel().setVisible(true));
+        SwingUtilities.invokeLater(() -> new AdminPanel(null).setVisible(true));
     }
 }
