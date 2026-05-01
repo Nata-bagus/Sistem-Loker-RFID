@@ -57,7 +57,7 @@ public class PendaftaranLoker extends JFrame {
     // Simulasi: di hardware nyata, UID dibaca dari RC522 via serial
     private boolean kartuSudahDibaca = false;
     private SerialHelper serialHelper;
-    private static final String SERIAL_PORT = "COM9";
+    private static final String SERIAL_PORT = "COM3";
 
     public PendaftaranLoker() {
         setTitle("Sistem Loker RFID — Universitas Negeri Malang");
@@ -200,7 +200,7 @@ public class PendaftaranLoker extends JFrame {
         p.add(Box.createVerticalStrut(14));
 
         // 1. Buat tombol dulu
-        btnReset  = createButton("Reset", C_WHITE, C_TEXT);
+        btnReset  = createButton("Reset", C_PRIMARY, C_WHITE);
         btnReset.setBorder(BorderFactory.createCompoundBorder(
             new LineBorder(C_BORDER, 1, true),
             BorderFactory.createEmptyBorder(0, 0, 0, 0)));
@@ -209,7 +209,7 @@ public class PendaftaranLoker extends JFrame {
         btnDaftar = createButton("Daftar & Simpan ke Database", C_PRIMARY, Color.WHITE);
         btnDaftar.addActionListener(e -> daftarkan());
 
-        btnBack = createButton("Kembali", C_SUCCESS, Color.WHITE);
+        btnBack = createButton("Kembali", C_PRIMARY, Color.WHITE);
         btnBack.addActionListener(e -> Balik());
 
         // 2. Susun layout
@@ -408,7 +408,7 @@ public class PendaftaranLoker extends JFrame {
         String prodi = (String) cbProdi.getSelectedItem();
 
         if (nama.isEmpty()) {
-            showStatus("⚠  Nama tidak boleh kosong!", C_DANGER_L, C_DANGER);
+            showStatus("Nama tidak boleh kosong!", C_DANGER_L, C_DANGER);
             tfNama.requestFocus();
             return;
         } 
@@ -417,35 +417,35 @@ public class PendaftaranLoker extends JFrame {
            
         } else {
             // Input TIDAK VALID (mengandung angka atau simbol)
-            showStatus("Nama jangan menggunakan angka, huruf saja", C_DANGER_L, C_DANGER);
+            showStatus("Nama jangan menggunakan angka atau simbol, huruf saja", C_DANGER_L, C_DANGER);
             tfNama.requestFocus();
             return;
         }
         
         if (prodi == null || prodi.startsWith("--")) {
-            showStatus("⚠  Silakan pilih Program Studi!", C_DANGER_L, C_DANGER);
+            showStatus("Silakan pilih Program Studi!", C_DANGER_L, C_DANGER);
             cbProdi.requestFocus();
             return;
         }
         if (!kartuSudahDibaca) {
-            showStatus("⚠  Kartu belum di-scan! Tempelkan kartu lalu klik Scan.", C_DANGER_L, C_DANGER);
+            showStatus("Kartu belum di-scan! Tempelkan kartu lalu klik Scan.", C_DANGER_L, C_DANGER);
             return;
         }
 
         String uidKartu = tfIdKartu.getText().trim();
 
         btnDaftar.setEnabled(false);
-        btnDaftar.setText("⏳  Menyimpan...");
+        btnDaftar.setText("Menyimpan...");
 
         // Jalankan di thread terpisah agar GUI tidak freeze
         new Thread(() -> {
             try {
                 int kartuId = DatabaseHelper.simpanPendaftaran(nama, prodi, uidKartu);
                 SwingUtilities.invokeLater(() -> {
-                    showStatus("✅  Berhasil! " + nama + " terdaftar. ID Kartu DB: " + kartuId,
+                    showStatus("Berhasil! " + nama + " terdaftar. ID Kartu DB: " + kartuId,
                         C_SUCCESS_L, C_SUCCESS);
                     btnDaftar.setEnabled(true);
-                    btnDaftar.setText("💾  Daftar & Simpan ke Database");
+                    btnDaftar.setText("Daftar & Simpan ke Database");
                     JOptionPane.showMessageDialog(this,
                         "<html><b>Pendaftaran Berhasil!</b><br><br>" +
                         "Nama&nbsp;&nbsp;: " + nama + "<br>" +
@@ -458,9 +458,9 @@ public class PendaftaranLoker extends JFrame {
                 });
             } catch (Exception ex) {
                 SwingUtilities.invokeLater(() -> {
-                    showStatus("❌  Gagal simpan: " + ex.getMessage(), C_DANGER_L, C_DANGER);
+                    showStatus("Gagal simpan: " + ex.getMessage(), C_DANGER_L, C_DANGER);
                     btnDaftar.setEnabled(true);
-                    btnDaftar.setText("💾  Daftar & Simpan ke Database");
+                    btnDaftar.setText("Daftar & Simpan ke Database");
                 });
             }
         }).start();
@@ -472,7 +472,7 @@ public class PendaftaranLoker extends JFrame {
         tfIdKartu.setText("— Belum ada kartu —");
         kartuSudahDibaca = false;
         lblStatus.setText(" ");
-        lblRfidStatus.setText("⏳  Menunggu kartu ditempelkan...");
+        lblRfidStatus.setText("Menunggu kartu ditempelkan...");
         lblRfidStatus.setBackground(C_WARNING_L);
         lblRfidStatus.setForeground(C_WARNING);
     }
@@ -532,11 +532,11 @@ public class PendaftaranLoker extends JFrame {
 
     boolean berhasil = serialHelper.mulaiMembaca();
     if (berhasil) {
-        lblRfidStatus.setText("✅  ESP32 terhubung di " + SERIAL_PORT);
+        lblRfidStatus.setText("ESP32 terhubung di " + SERIAL_PORT);
         lblRfidStatus.setBackground(C_SUCCESS_L);
         lblRfidStatus.setForeground(C_SUCCESS);
     } else {
-        lblRfidStatus.setText("❌  ESP32 tidak ditemukan di " + SERIAL_PORT);
+        lblRfidStatus.setText("ESP32 tidak ditemukan di " + SERIAL_PORT);
         lblRfidStatus.setBackground(C_DANGER_L);
         lblRfidStatus.setForeground(C_DANGER);
     }
