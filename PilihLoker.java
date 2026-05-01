@@ -159,7 +159,7 @@ public class PilihLoker extends JDialog {
         JButton btnBatal = createButton("Batal", C_GRAY, C_WHITE);
         btnBatal.addActionListener(e -> dispose());
 
-        btnBuka = createButton("🔓  Buka Loker", C_SUCCESS, C_WHITE);
+        btnBuka = createButton("Buka Loker", C_SUCCESS, C_WHITE);
         btnBuka.setEnabled(false);
         btnBuka.addActionListener(e -> bukaLokerDipilih());
 
