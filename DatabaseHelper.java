@@ -229,6 +229,100 @@ public class DatabaseHelper {
         }
         return -1;
     }
+    
+        /** Ambil semua loker yang sedang terisi beserta info user */
+    public static String[][] getLokerTerisi() {
+        String sql = """
+            SELECT l.id_loker, l.nomor_loker,
+                   u.nama, u.prodi,
+                   a.waktu_buka, a.id_akses
+            FROM   loker l
+            JOIN   akses_loker a ON l.id_loker = a.id_loker
+            JOIN   user u        ON a.id_user  = u.id_user
+            WHERE  l.status = 'terisi' AND a.waktu_tutup IS NULL
+            ORDER  BY l.nomor_loker
+            """;
+        java.util.List<String[]> rows = new java.util.ArrayList<>();
+        try (Connection con = getConnection();
+             Statement  st  = con.createStatement();
+             ResultSet  rs  = st.executeQuery(sql)) {
+            while (rs.next()) {
+                rows.add(new String[]{
+                    String.valueOf(rs.getInt("id_loker")),
+                    String.valueOf(rs.getInt("nomor_loker")),
+                    rs.getString("nama"),
+                    rs.getString("prodi"),
+                    rs.getTimestamp("waktu_buka") != null
+                        ? rs.getTimestamp("waktu_buka").toLocalDateTime()
+                            .format(java.time.format.DateTimeFormatter
+                                .ofPattern("dd/MM/yyyy HH:mm"))
+                        : "-",
+                    String.valueOf(rs.getInt("id_akses"))
+                });
+            }
+        } catch (SQLException e) {
+            System.err.println("[DB] getLokerTerisi gagal: " + e.getMessage());
+        }
+        return rows.toArray(new String[0][]);
+    }
+
+    /** Emergency: kosongkan loker dan tutup sesi akses */
+    public static boolean emergencyKosongkanLoker(int idLoker, int idAkses) {
+        String sqlLoker = "UPDATE loker SET status = 'kosong' WHERE id_loker = ?";
+        String sqlAkses = """
+            UPDATE akses_loker SET waktu_tutup = NOW()
+            WHERE  id_akses = ?
+            """;
+        try (Connection con = getConnection()) {
+            con.setAutoCommit(false);
+            try {
+                try (PreparedStatement ps = con.prepareStatement(sqlLoker)) {
+                    ps.setInt(1, idLoker);
+                    ps.executeUpdate();
+                }
+                try (PreparedStatement ps = con.prepareStatement(sqlAkses)) {
+                    ps.setInt(1, idAkses);
+                    ps.executeUpdate();
+                }
+                con.commit();
+                return true;
+            } catch (SQLException ex) {
+                con.rollback();
+                return false;
+            }
+        } catch (SQLException e) {
+            System.err.println("[DB] emergencyKosongkanLoker gagal: " + e.getMessage());
+            return false;
+        }
+    }
+
+    /** Emergency: kosongkan SEMUA loker sekaligus */
+    public static boolean emergencyKosongkanSemua() {
+        String sqlLoker = "UPDATE loker SET status = 'kosong'";
+        String sqlAkses = """
+            UPDATE akses_loker SET waktu_tutup = NOW()
+            WHERE  waktu_tutup IS NULL
+            """;
+        try (Connection con = getConnection()) {
+            con.setAutoCommit(false);
+            try {
+                try (PreparedStatement ps = con.prepareStatement(sqlLoker)) {
+                    ps.executeUpdate();
+                }
+                try (PreparedStatement ps = con.prepareStatement(sqlAkses)) {
+                    ps.executeUpdate();
+                }
+                con.commit();
+                return true;
+            } catch (SQLException ex) {
+                con.rollback();
+                return false;
+            }
+        } catch (SQLException e) {
+            System.err.println("[DB] emergencyKosongkanSemua gagal: " + e.getMessage());
+            return false;
+        }
+    }
     /**
      * Validasi kartu saat mengakses loker.
      * Kembalikan nama mahasiswa jika kartu valid, null jika tidak ditemukan.
